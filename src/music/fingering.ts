@@ -11,6 +11,7 @@
  *    that is still ringing).
  * The hand position is carried along each path so that open strings do not reset it.
  */
+import { fretMiss, type HandHint } from './playthrough';
 import type { InstrumentKind, Tuning } from './tunings';
 
 export interface NoteIn {
@@ -38,7 +39,12 @@ export interface FingeringOptions {
   /** Highest fret on the neck (absolute, not relative to the capo). */
   frets: number;
   capo: number;
+  /** Where the fretting hand was at a given time (from a playthrough video), if known. */
+  hand?: (time: number) => HandHint | null;
 }
+
+/** Cost per fret that a fretted note lies outside the filmed hand position (× confidence). */
+const HAND_MISS_COST = 1.5;
 
 export interface FingeringResult<N extends NoteIn = NoteIn> {
   notes: FingeredNote<N>[];
@@ -213,6 +219,10 @@ function buildEvents<N extends NoteIn>(notes: N[], opts: FingeringOptions, dropp
       members = members.filter((_, k) => k !== weakest);
     }
     if (members.length === 0) continue;
+    const hint = opts.hand?.(t0) ?? null;
+    if (hint) {
+      for (const c of candidates) c.cost += HAND_MISS_COST * hint.confidence * c.frets.reduce((s, f) => s + fretMiss(f, hint), 0);
+    }
     candidates.sort((a, b) => a.cost - b.cost);
     events.push({ start: t0, notes: members, candidates: candidates.slice(0, MAX_CANDIDATES) });
   }

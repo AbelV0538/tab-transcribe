@@ -28,6 +28,27 @@
           <span id="dropHint" class="muted">MP3, M4A, WAV, FLAC, MP4, MOV, WebM… or drop it here</span>
         </label>
 
+        <div id="playthroughRow" class="playthrough" hidden>
+          <label class="check">
+            <input id="playthrough" type="checkbox" />
+            <span><strong>Playthrough video</strong><span class="muted"> — use the footage of the fretting hand to correct the tab</span></span>
+          </label>
+          <label class="inline">Filmed instrument
+            <select id="filmedInstrument">
+              <option value="bass">Bass</option>
+              <option value="guitar">Guitar</option>
+            </select>
+          </label>
+        </div>
+
+        <section id="calib" class="calib" hidden aria-label="Fretboard calibration">
+          <p class="calib-status" role="status"></p>
+          <div class="calib-stage"><canvas></canvas></div>
+          <label class="calib-time">Frame <input type="range" min="0" max="1000" value="333" aria-label="Choose a frame" /></label>
+          <div class="calib-marks"></div>
+          <p class="muted small">Tip: pick a frame where the neck is clear of your hand, and mark frets far apart (e.g. the inlays at 5 and 12). Frets are counted from the nut even if it's off screen.</p>
+        </section>
+
         <details id="options">
           <summary>Options</summary>
           <form id="settingsForm" class="settings" onsubmit="return false">
@@ -115,6 +136,7 @@
               </select>
             </label>
             <label class="inline"><input id="follow" type="checkbox" checked /> Follow</label>
+            <label class="inline" id="showNeckWrap" hidden><input id="showNeck" type="checkbox" checked /> Neck overlay</label>
           </div>
         </div>
 

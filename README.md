@@ -118,6 +118,31 @@ The production build is a static site, so any static host works. Served over HTT
 5. Changing options after a transcription updates the tab instantly; the recording is not re-analysed.
 6. **Export** as `.txt`, `.mid` or `.musicxml`. On a phone, this opens the share sheet so you can save to Files/Drive or send the file to another app.
 
+### Playthrough videos (camera on the fretboard)
+
+If the video shows someone playing the bass or guitar, the footage can correct the tab:
+
+1. Choose the video, tick **Playthrough video** and pick the **filmed instrument**.
+2. In the frame that appears, drag the slider to a frame where the neck is clearly visible, ideally with the hand away from the frets you'll mark.
+3. Tap two fret spaces you can identify, such as the inlays at frets 5 and 12, and set their fret numbers. A blue fret grid appears. It should sit on the fret wires, so drag a mark to adjust it. You can add a third mark for perspective. Frets are counted from the nut even when the nut is off screen.
+4. Tap **Transcribe**.
+
+The app then follows the neck through the video and finds where the fretting hand covers the fretboard. It uses that position in three ways:
+
+- It places notes on the strings and frets under the hand, instead of wherever is easiest.
+- It moves a note up or down an octave when the hand can't be playing it where it was heard. The note detector often gets bass notes an octave wrong.
+- It always shows a track for the filmed instrument.
+
+While playing back, **Neck overlay** draws the tracked frets and the detected hand over the video, so you can check them.
+
+This works best when:
+
+- **Camera:** it doesn't zoom. The instrument may move and tilt.
+- **Fretboard:** it is in view and contrasts with the hand. A light maple board and a dark hand, or a dark rosewood board and a light hand, both work.
+- **Hand:** it moves around at least now and then. If it never leaves one spot, choose a calibration frame where that spot is uncovered.
+
+The video tells the app where the hand is, not which finger presses which string. So it corrects positions and octave mistakes, but it can't recover notes the audio missed entirely.
+
 ### Tips and limitations
 
 - Works best on recordings where the guitar and/or bass are clearly audible: practice videos, DI/amp recordings, band rehearsals, or isolated stems.
@@ -148,18 +173,19 @@ file ──► decode (Web Audio → MP4 demux + WebCodecs → media-element cap
 | Instrument detection | `src/music/instruments.ts` | Per-note bass-vs-guitar log-likelihood built from register, lowest-voice share, chord context and timbre. Presence is decided from the amount of confident evidence. The bass line is the maximum-weight monophonic subset (weighted interval scheduling). Overtone ghosts are recognised by interval, timing, relative strength and whether they stand alone. |
 | Tuning | `src/music/tunings.ts` | A popularity prior, a fit to the fretboard range, and a bonus when the open low string is actually played. |
 | Fingering | `src/music/fingering.ts` | Viterbi search over chord shapes and positions. It scores stretch, fingers and barres, fret height, open strings and muted inner strings, plus hand shifts (weighted by how fast they must happen), string skips and cutting off ringing strings. The hand is modelled as a range of index-finger positions, so open-position playing is understood. |
+| Playthrough video | `src/vision/`, `src/music/playthrough.ts` | The fretboard is modelled from 2–3 marked fret spaces using the equal-tempered fret rule, with an optional perspective term. The neck is tracked by aligning every frame to the calibration frame with a robust similarity warp. It uses a coarse search and then pyramid Gauss-Newton with Tukey weights; the scale prior guards against the fretboard's self-similarity. Each frame's board is resampled into a strip. The uncovered board is the tightest cluster of each cell over time, falling back to the calibration frame. Covered stretches, after a local misalignment correction, give the hand's fret window. That window adds costs in the fingering search and drives octave corrections. Frames are captured by fast muted playback and analysed in a worker. |
 | Rhythm | `src/music/rhythm.ts` | Autocorrelation tempo estimate with a log-normal prior, a dynamic-programming beat tracker (Ellis 2007), half-tempo correction, triplet detection, and downbeat choice from low-note accents. |
 
 ## Development
 
 ```bash
-npm test             # unit tests (fingering, detection, rhythm, tab layout, exports)
+npm test             # unit tests (fingering, detection, rhythm, tab layout, exports, fretboard vision on synthetic footage)
 npm run test:model   # runs the real neural model on synthesised guitar/bass recordings
 npm run build && npm run test:e2e   # browser tests of the production build (audio + video input)
 npm run icons        # regenerate PNG icons/splash screens from public/icons/icon.svg
 ```
 
-The model tests synthesise plucked-string recordings (Karplus-Strong) of a bass line, strummed chords, a melody, and mixtures of them. They check note accuracy, timing, instrument detection and fingering. The browser tests upload a WAV and a WebM video recorded in the browser, then check detection, the tab, tap-to-seek, playback and all three exports. Screenshots are saved to `tests/e2e/out/`.
+The model tests synthesise plucked-string recordings (Karplus-Strong) of a bass line, strummed chords, a melody, and mixtures of them. They check note accuracy, timing, instrument detection and fingering. The browser tests upload a WAV and a WebM video recorded in the browser, then check detection, the tab, tap-to-seek, playback and all three exports. They also film a synthetic bass playthrough: they calibrate it by tapping the inlays and check that the tab moves to where the filmed hand is. Screenshots are saved to `tests/e2e/out/`.
 
 ## Third-party components
 

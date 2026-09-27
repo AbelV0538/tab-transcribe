@@ -14,6 +14,7 @@
  * when both are present the bass line is extracted as the best-scoring monophonic subset.
  */
 import type { RawNote } from '../engine/types';
+import type { InstrumentKind } from './tunings';
 
 export type InstrumentMode = 'auto' | 'guitar' | 'bass' | 'both';
 
@@ -221,7 +222,16 @@ function presence(count: number, mass: number, present: boolean): InstrumentPres
   return { present, confidence: present ? 0.5 + 0.5 * e : 0.5 * e, evidence: count };
 }
 
-export function detectInstruments(notes: RawNote[], mode: InstrumentMode): DetectionResult {
+/** Evidence from a playthrough video: per-note weights for the filmed instrument (see ./playthrough). */
+export interface FilmedWeights {
+  instrument: InstrumentKind;
+  weights: number[];
+}
+
+export function detectInstruments(notes: RawNote[], mode: InstrumentMode, filmed?: FilmedWeights): DetectionResult {
+  const videoBass = (i: number) => (filmed?.instrument === 'bass' ? filmed.weights[i] : 1);
+  // A filmed guitar can't be playing notes its fretting hand is nowhere near.
+  const videoRejectsGuitar = (i: number) => filmed?.instrument === 'guitar' && filmed.weights[i] < 0.5;
   const ctx = computeContext(notes);
   const scores = notes.map((n, i) => bassScore(n, ctx[i]));
   const weight = (n: RawNote) => n.amplitude * Math.min(1, Math.max(0.05, n.end - n.start));
@@ -268,25 +278,25 @@ export function detectInstruments(notes: RawNote[], mode: InstrumentMode): Detec
       const c = ctx[i];
       // A weaker note an octave/twelfth above a ringing bass note is an overtone: never keep it.
       if (c.overtoneOf >= 0 || c.overtoneOfSounding) return -1;
-      return notes[i].amplitude * (0.5 + c.lowestFrac) * (c.rank === 0 ? 1.5 : 0.7);
+      return notes[i].amplitude * (0.5 + c.lowestFrac) * (c.rank === 0 ? 1.5 : 0.7) * videoBass(i);
     });
     discarded = notes.length - bassSet.size;
   } else if (hasBass && hasGuitar) {
     bassSet = bestMonophonicLine(
       notes,
       all.filter((i) => !(ctx[i].overtoneOf >= 0 && ctx[i].isolated) && notes[i].pitch <= 67),
-      (i) => scores[i] * notes[i].amplitude,
+      (i) => scores[i] * notes[i].amplitude * videoBass(i),
     );
     for (const i of all) {
       if (bassSet.has(i)) continue;
       const ghostOfBass = ctx[i].overtoneOf >= 0 && ctx[i].isolated && bassSet.has(ctx[i].overtoneOf);
       // Below every guitar tuning we support: a bass note that lost to a stronger one.
-      if (ghostOfBass || notes[i].pitch < 35) discarded++;
+      if (ghostOfBass || notes[i].pitch < 35 || videoRejectsGuitar(i)) discarded++;
       else guitarIdx.push(i);
     }
   } else {
     // Guitar only: drop clearly weaker octave/twelfth ghosts above single notes.
-    guitarIdx = all.filter((i) => !(ctx[i].overtoneOf >= 0 && ctx[i].isolated && ctx[i].overtoneRatio < 0.65));
+    guitarIdx = all.filter((i) => !(ctx[i].overtoneOf >= 0 && ctx[i].isolated && ctx[i].overtoneRatio < 0.65) && !videoRejectsGuitar(i));
     discarded = notes.length - guitarIdx.length;
   }
 

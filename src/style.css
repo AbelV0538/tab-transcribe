@@ -77,6 +77,22 @@ main > *, #results > * { min-width: 0; }
 .drop span { font-size: 14px; }
 
 details > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+
+.playthrough { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 14px; font-size: 15px; }
+.check { display: inline-flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.check input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
+.calib { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 10px; justify-items: center; }
+.calib-status { margin: 0; font-weight: 600; justify-self: stretch; }
+.calib-stage canvas { display: block; max-width: 100%; border-radius: 8px; touch-action: none; cursor: crosshair; background: #000; }
+.calib-time { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 14px; color: var(--muted); }
+.calib-time input { flex: 1; accent-color: var(--accent); }
+.calib-marks { display: flex; flex-wrap: wrap; gap: 8px; justify-self: stretch; }
+.calib-mark { display: inline-flex; align-items: center; gap: 6px; }
+.calib-mark button[data-mark] { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); font-size: 14px; }
+.calib-mark button[data-mark].on { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.calib-mark select { padding: 5px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+.link { border: 0; background: none; color: var(--accent); padding: 0 4px; font-size: 14px; }
+.small { font-size: 13px; margin: 0; justify-self: stretch; }
 #options { margin: 14px 0 4px; }
 .settings { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; margin-top: 10px; }
 .settings label { display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
@@ -106,7 +122,9 @@ button { cursor: pointer; }
 .dot.bass { background: var(--bass); }
 
 .player { display: grid; gap: 10px; }
+.media-box { position: relative; }
 .media-box video { width: 100%; max-height: 42vh; border-radius: 10px; background: #000; display: block; }
+.neck-overlay { position: absolute; pointer-events: none; }
 .media-box:empty { display: none; }
 .transport { display: flex; align-items: center; gap: 12px; }
 .transport input[type=range] { flex: 1; accent-color: var(--accent); }

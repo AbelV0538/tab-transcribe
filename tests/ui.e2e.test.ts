@@ -9,7 +9,8 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { chromium, type Browser, type Page } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { bassSong, encodeWav, guitarMelodySong, synthesize } from './helpers/synth';
+import { fretSpacePoint, renderFretboard, type FretboardPose } from './helpers/fretboard';
+import { bassSong, encodeWav, guitarMelodySong, synthesize, type SynthNote } from './helpers/synth';
 
 const root = path.resolve(__dirname, '..');
 const dist = path.join(root, 'dist');
@@ -163,6 +164,120 @@ describe('web app', () => {
       expect(await page.locator('#error').innerText()).toMatch(message);
       expect(await page.locator('#results').isHidden()).toBe(true);
     }
+    await page.close();
+  }, 300_000);
+
+  it('corrects the tab with a playthrough video', async () => {
+    // A bass line that fits both open position and 5th position, filmed with the fretting hand
+    // held over frets 5-8.
+    const pitches = [38, 40, 42, 43, 45, 43, 42, 40];
+    const line: SynthNote[] = [...pitches, ...pitches].map((p, i) => ({ pitch: p, start: 0.5 + i * 0.5, end: 0.95 + i * 0.5, instrument: 'bass' }));
+    fs.writeFileSync(path.join(out, 'playthrough.wav'), encodeWav(synthesize(line, 9, 44100), 44100));
+    const pose: FretboardPose = { nutX: -120, nutY: 250, angle: 22, scale: 900 };
+    const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+    const problems: string[] = [];
+    page.on('pageerror', (e) => problems.push(String(e)));
+    page.on('console', (m) => m.type() === 'error' && problems.push(m.text()));
+    const videoLog: string[] = [];
+    page.on('console', (m) => m.text().startsWith('[video]') && videoLog.push(m.text()));
+    await page.goto(base);
+    const b64 = await page.evaluate(
+      async ({ src, pose, wavUrl }) => {
+        const render = new Function(`return (${src})`)() as (w: number, h: number, p: unknown, hand: unknown) => Float32Array;
+        const W = 360;
+        const H = 640;
+        // A few frames with slightly different hand shapes, and one with the hand lifted off.
+        const images = [0, 1, 2, 3].map((k) => {
+          const g = render(W, H, pose, k === 3 ? null : { from: 4.6 + 0.1 * k, to: 8.8 - 0.1 * k });
+          const img = new ImageData(W, H);
+          for (let i = 0; i < g.length; i++) img.data.set([g[i], g[i], g[i], 255], i * 4);
+          return img;
+        });
+        const canvas = Object.assign(document.createElement('canvas'), { width: W, height: H });
+        const ctx2d = canvas.getContext('2d')!;
+        ctx2d.putImageData(images[0], 0, 0);
+        const ac = new AudioContext();
+        const buf = await ac.decodeAudioData(await (await fetch(wavUrl)).arrayBuffer());
+        const dest = ac.createMediaStreamDestination();
+        const srcNode = ac.createBufferSource();
+        srcNode.buffer = buf;
+        srcNode.connect(dest);
+        const stream = new MediaStream([...canvas.captureStream(30).getVideoTracks(), ...dest.stream.getAudioTracks()]);
+        const rec = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8,opus', videoBitsPerSecond: 2_500_000 });
+        const chunks: Blob[] = [];
+        rec.ondataavailable = (e) => chunks.push(e.data);
+        const stopped = new Promise((r) => (rec.onstop = r));
+        // Notes start every 0.5 s from 0.5 s; the hand lifts off between every other pair of notes.
+        const t0 = performance.now();
+        let k = 0;
+        const timer = setInterval(() => {
+          const t = (performance.now() - t0) / 1000;
+          const lifted = t % 1 > 0.7 && t % 1 < 0.92;
+          ctx2d.putImageData(images[lifted ? 3 : k++ % 3], 0, 0);
+        }, 20);
+        rec.start(250);
+        srcNode.start();
+        await new Promise((r) => setTimeout(r, buf.duration * 1000 + 300));
+        rec.stop();
+        await stopped;
+        clearInterval(timer);
+        const bytes = new Uint8Array(await new Blob(chunks, { type: 'video/webm' }).arrayBuffer());
+        let s = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        return btoa(s);
+      },
+      { src: renderFretboard.toString(), pose, wavUrl: `${base}__fixtures/playthrough.wav` },
+    );
+    const video = path.join(out, 'playthrough.webm');
+    fs.writeFileSync(video, Buffer.from(b64, 'base64'));
+
+    const bassTab = async () => {
+      if (await page.getByRole('button', { name: 'Bass', exact: true }).count()) await page.getByRole('button', { name: 'Bass', exact: true }).click();
+      const text = await page.locator('#tabView').innerText();
+      return text
+        .split('\n')
+        .filter((l) => /^[GDAE]\s*\|/.test(l))
+        .flatMap((l) => (l.split('|').slice(1).join('|').match(/\d+/g) ?? []).map(Number));
+    };
+
+    // Without the video: the optimiser's own choice.
+    await transcribe(page, video);
+    const plain = await bassTab();
+    expect(plain.length).toBeGreaterThan(8);
+
+    // With the video: switch on, mark frets 5 and 12, transcribe again.
+    await page.check('#playthrough');
+    const canvas = page.locator('#calib canvas');
+    await expect.poll(async () => (await canvas.boundingBox())?.width ?? 0, { timeout: 20_000 }).toBeGreaterThan(50);
+    await page.waitForTimeout(300);
+    for (const fret of [5, 12]) {
+      const box = (await canvas.boundingBox())!;
+      const [x, y] = fretSpacePoint(pose, fret);
+      await page.mouse.click(box.x + (x / 360) * box.width, box.y + (y / 640) * box.height);
+    }
+    await expect.poll(() => page.locator('.calib-status').innerText()).toMatch(/blue lines/);
+    await page.screenshot({ path: path.join(out, 'calibration.png'), fullPage: true });
+    await page.click('#goBtn');
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('#goBtn')!.disabled, null, { timeout: 180_000 });
+    expect(problems).toEqual([]);
+    expect(await page.locator('#error').isHidden()).toBe(true);
+    const summary = await page.locator('#summary').innerText();
+    expect(summary, summary + videoLog.join(' ')).toMatch(/Video: hand position used for (9\d|100)% of bass notes/);
+    const filmed = await bassTab();
+    // Without the video the line is fingered in open position (frets 0-4). With it, every fretted
+    // note sits under the filmed hand (frets 5-8, plus a fret of slack each side); open strings are
+    // still fine, a player in 5th position uses them too.
+    const detail = JSON.stringify({ plain, filmed, summary });
+    expect(Math.max(...plain), detail).toBeLessThanOrEqual(4);
+    const fretted = filmed.filter((f) => f > 0);
+    expect(fretted.every((f) => f >= 4 && f <= 10), detail).toBe(true);
+    expect(fretted.filter((f) => f >= 7).length, detail).toBeGreaterThanOrEqual(4);
+    // The neck overlay is drawn over the video.
+    expect(await page.locator('#mediaBox canvas.neck-overlay').count()).toBe(1);
+    await page.click('#playBtn');
+    await page.waitForTimeout(800);
+    await page.click('#playBtn');
+    await page.screenshot({ path: path.join(out, 'playthrough.png'), fullPage: true });
     await page.close();
   }, 300_000);
 
