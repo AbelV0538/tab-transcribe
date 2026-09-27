@@ -1,16 +1,40 @@
 /**
  * Decode an audio or video file into mono PCM at the model's sample rate.
  *
- * The browser's own decoder (`decodeAudioData`) handles the audio track of common video
- * containers (MP4/MOV/M4V, WebM/MKV) as well as MP3, AAC, WAV, FLAC and Ogg. When it refuses
- * a file, we fall back to playing it silently through a media element and recording the
- * output, which works for anything the platform's media player can play.
+ * Three decoders are tried in turn, and each result is checked: a decoder that returns
+ * silence for a file that has sound in it counts as a failure, not as a quiet recording.
+ *  1. The browser's file decoder (`decodeAudioData`): MP3, AAC, WAV, FLAC, Ogg and the audio
+ *     track of MP4/MOV/M4V and WebM/MKV videos.
+ *  2. For MP4/MOV/M4A: our own demuxer (./mp4) plus the WebCodecs AudioDecoder.
+ *  3. Playing the file silently through a media element and recording the output, which
+ *     works for anything the platform's media player can play.
  */
+import { probeMp4, type Mp4Probe } from './mp4';
+import { decodeWithWebCodecs, webCodecsAvailable } from './webcodecs';
 
 export interface DecodedAudio {
   samples: Float32Array;
   sampleRate: number;
   duration: number;
+  /** Which decoder produced the audio (for diagnostics). */
+  decoder: string;
+}
+
+/** A peak below this (-80 dBFS) is digital silence: the decoder produced no real audio. */
+const SILENCE_PEAK = 1e-4;
+
+function peakOf(samples: Float32Array): number {
+  let m = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const v = Math.abs(samples[i]);
+    if (v > m) m = v;
+  }
+  return m;
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message || err.name;
+  return String(err ?? 'unknown error');
 }
 
 type OfflineCtor = typeof OfflineAudioContext;
@@ -62,27 +86,69 @@ export async function decodeFile(
   onProgress: (stage: string, fraction: number) => void = () => {},
   fallbackContext?: AudioContext,
 ): Promise<DecodedAudio> {
+  const attempts: string[] = [];
+  const accept = (samples: Float32Array, decoder: string): DecodedAudio | null => {
+    const peak = peakOf(samples);
+    const duration = samples.length / targetRate;
+    console.info(`[decode] ${decoder}: ${duration.toFixed(1)} s, peak ${(20 * Math.log10(peak + 1e-12)).toFixed(1)} dBFS`);
+    if (duration < 0.05) attempts.push(`${decoder}: no audio`);
+    else if (peak < SILENCE_PEAK) attempts.push(`${decoder}: decoded to silence`);
+    else return { samples, sampleRate: targetRate, duration, decoder };
+    return null;
+  };
+
+  // 1. The browser's file decoder. Decoding into an offline context at the target rate also resamples.
   onProgress('Reading file', 0);
-  const data = await file.arrayBuffer();
+  let data: ArrayBuffer | null = await file.arrayBuffer();
   onProgress('Decoding audio', 0);
-  let buffer: AudioBuffer | null = null;
   try {
-    // Decoding into an offline context at the target rate also resamples.
-    const Ctor = offlineCtor();
-    buffer = await decodeWith(new Ctor(1, 1, targetRate), data);
-  } catch {
-    buffer = null;
-  }
-  if (buffer && buffer.length > 0) {
+    const buffer = await decodeWith(new (offlineCtor())(1, 1, targetRate), data);
     let samples = mixToMono(buffer);
     if (buffer.sampleRate !== targetRate) samples = await resample(samples, buffer.sampleRate, targetRate);
-    onProgress('Decoding audio', 1);
-    return { samples, sampleRate: targetRate, duration: samples.length / targetRate };
+    const ok = accept(samples, 'Web Audio');
+    if (ok) return ok;
+  } catch (err) {
+    attempts.push(`Web Audio: ${describeError(err)}`);
   }
-  if (!fallbackContext) throw new Error('This file format could not be decoded on this device.');
-  const recorded = await recordThroughMediaElement(file, fallbackContext, (f) => onProgress('Extracting audio track', f));
-  const samples = await resample(recorded.samples, recorded.sampleRate, targetRate);
-  return { samples, sampleRate: targetRate, duration: samples.length / targetRate };
+
+  // 2. MP4/MOV: demux here and decode with WebCodecs. (decodeAudioData detached `data`.)
+  data = await file.arrayBuffer();
+  const probe: Mp4Probe = probeMp4(new Uint8Array(data));
+  if (probe.kind === 'no-audio') throw new Error('This video has no audio track, so there is nothing to transcribe.');
+  if (probe.kind === 'unsupported') attempts.push(`MP4 demuxer: audio format "${probe.format}" not supported`);
+  if (probe.kind === 'audio') {
+    if (!webCodecsAvailable()) attempts.push('WebCodecs: not available in this browser');
+    else {
+      try {
+        onProgress('Decoding audio track', 0);
+        const decoded = await decodeWithWebCodecs(new Uint8Array(data), probe.track, (f) => onProgress('Decoding audio track', f));
+        const ok = accept(await resample(decoded.samples, decoded.sampleRate, targetRate), `WebCodecs (${probe.track.format})`);
+        if (ok) return ok;
+      } catch (err) {
+        attempts.push(`WebCodecs: ${describeError(err)}`);
+      }
+    }
+  }
+  data = null;
+
+  // 3. Play the file through a media element and record what comes out.
+  if (fallbackContext) {
+    try {
+      const recorded = await recordThroughMediaElement(file, fallbackContext, (f) => onProgress('Extracting audio track', f));
+      const ok = accept(await resample(recorded.samples, recorded.sampleRate, targetRate), 'media element');
+      if (ok) return ok;
+    } catch (err) {
+      attempts.push(`media element: ${describeError(err)}`);
+    }
+  }
+
+  console.warn('[decode] no decoder produced audio:', attempts);
+  const format = probe.kind === 'audio' ? ` (${probe.track.format}, ${probe.track.sampleRate / 1000} kHz)` : '';
+  throw new Error(
+    `No sound could be decoded from this file's audio track${format}: it is either silent, or this browser can't decode it. ` +
+      'If it plays with sound in other apps, try another browser or convert it to MP3 or WAV. ' +
+      `[Tried: ${attempts.join('; ')}]`,
+  );
 }
 
 /**

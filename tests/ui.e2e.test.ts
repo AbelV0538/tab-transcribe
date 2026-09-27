@@ -124,6 +124,48 @@ describe('web app', () => {
     await page.close();
   }, 300_000);
 
+  it('decodes an MP4 with WebCodecs when the browser file decoder fails', async () => {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const logs: string[] = [];
+    page.on('console', (m) => logs.push(m.text()));
+    // Simulate a browser whose decodeAudioData can't read the file.
+    await page.addInitScript(() => {
+      BaseAudioContext.prototype.decodeAudioData = function () {
+        return Promise.reject(new DOMException('Unable to decode audio data', 'EncodingError'));
+      };
+    });
+    await page.goto(base);
+    const supported = await page.evaluate(async () =>
+      typeof AudioDecoder !== 'undefined' && (await AudioDecoder.isConfigSupported({ codec: 'mp4a.40.2', sampleRate: 44100, numberOfChannels: 1 })).supported === true,
+    );
+    if (!supported) {
+      console.warn('Skipping: this browser build has no WebCodecs AAC decoder');
+      await page.close();
+      return;
+    }
+    await transcribe(page, path.join(root, 'tests/fixtures/bass-aac.mp4'));
+    expect(logs.some((l) => l.startsWith('[decode] WebCodecs (AAC-LC)'))).toBe(true);
+    expect(await page.locator('#summary').innerText()).toMatch(/No guitar detected[\s\S]*Bass ·/);
+    expect(await page.locator('#tabView').innerText()).toMatch(/^E\|-0---0---3/m);
+    await page.close();
+  }, 300_000);
+
+  it('explains when an audio track decodes to silence or is missing', async () => {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await page.goto(base);
+    for (const [file, message] of [
+      ['silent-aac.mp4', /No sound could be decoded from this file's audio track \(AAC-LC, 44\.1 kHz\)/],
+      ['video-only.mp4', /This video has no audio track/],
+    ] as const) {
+      await page.setInputFiles('#fileInput', path.join(root, 'tests/fixtures', file));
+      await page.click('#goBtn');
+      await page.waitForSelector('#error:not([hidden])', { timeout: 60_000 });
+      expect(await page.locator('#error').innerText()).toMatch(message);
+      expect(await page.locator('#results').isHidden()).toBe(true);
+    }
+    await page.close();
+  }, 300_000);
+
   it('accepts a video file', async () => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await page.goto(base);

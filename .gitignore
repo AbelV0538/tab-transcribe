@@ -11,3 +11,5 @@ tests/e2e/out/
 *.keystore
 *.jks
 keystore.properties
+# Personal test recordings (not ours to redistribute)
+testvid/

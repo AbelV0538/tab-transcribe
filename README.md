@@ -124,6 +124,7 @@ The production build is a static site, so any static host works. Served over HTT
 - The note model does not separate instruments. Vocals, keyboards or horns in a full mix will show up as extra "guitar" notes. Separating the stems first (for example with a stem-splitter) gives much cleaner tabs.
 - Heavy distortion and very fast playing make note detection harder. Try *High* sensitivity for quiet parts or *Low* for noisy ones.
 - The app does not detect techniques such as bends, slides, hammer-ons or palm muting; it writes the notes you hear.
+- If a file's audio can't be decoded, the app says so, instead of reporting that no instruments were found. The browser's console (F12) shows which decoders were tried (`[decode]` lines). Converting the file to MP3 or WAV, or trying another browser, usually helps.
 - Long files need a lot of memory while they are analysed (a few hundred MB for 10 minutes). On older phones, trim very long videos first.
 
 ---
@@ -131,7 +132,7 @@ The production build is a static site, so any static host works. Served over HTT
 ## How it works
 
 ```
-file ──► decode (Web Audio; media-element fallback) ──► mono 22.05 kHz
+file ──► decode (Web Audio → MP4 demux + WebCodecs → media-element capture; silence = failure) ──► mono 22.05 kHz
      ──► [worker] Basic Pitch (TensorFlow.js, WebGL/WASM) ──► frame + onset activations
      ──► note decoding ──► onset refinement (spectral flux) ──► timbre features per note
      ──► fragment merging ──► instrument detection & assignment
