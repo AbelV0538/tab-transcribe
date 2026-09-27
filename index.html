@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#16181d" />
+    <meta name="description" content="Transcribe guitar and bass from audio or video into playable tablature." />
+    <title>Tab Transcribe</title>
+    <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+  </head>
+  <body>
+    <header class="appbar">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><use href="#logo-mark" /></svg>
+        <span>Tab Transcribe</span>
+      </div>
+      <button id="aboutBtn" class="icon-btn" aria-label="About">?</button>
+    </header>
+
+    <main>
+      <section class="card" id="inputCard">
+        <label class="drop" id="drop">
+          <input id="fileInput" type="file" accept="audio/*,video/*,.mp3,.m4a,.aac,.wav,.flac,.ogg,.opus,.mp4,.mov,.m4v,.webm,.mkv,.3gp" />
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0-4-4m4 4 4-4M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" /></svg>
+          <strong id="dropTitle">Choose an audio or video file</strong>
+          <span id="dropHint" class="muted">MP3, M4A, WAV, FLAC, MP4, MOV, WebM… or drop it here</span>
+        </label>
+
+        <details id="options">
+          <summary>Options</summary>
+          <form id="settingsForm" class="settings" onsubmit="return false">
+            <label>Instrument
+              <select name="instrumentMode">
+                <option value="auto">Auto-detect</option>
+                <option value="guitar">Guitar only</option>
+                <option value="bass">Bass only</option>
+                <option value="both">Guitar + bass</option>
+              </select>
+            </label>
+            <label>Guitar tuning <select name="guitarTuning"></select></label>
+            <label>Bass tuning <select name="bassTuning"></select></label>
+            <label>Capo (guitar)
+              <input name="capo" type="number" min="0" max="12" step="1" value="0" inputmode="numeric" />
+            </label>
+            <label>Note sensitivity
+              <select name="sensitivity">
+                <option value="low">Low — clean notes only</option>
+                <option value="normal">Normal</option>
+                <option value="high">High — catch quiet notes</option>
+              </select>
+            </label>
+            <label>Tempo (BPM)
+              <input name="bpm" type="number" min="30" max="300" step="1" placeholder="Auto" inputmode="numeric" />
+            </label>
+            <label>Time signature
+              <select name="beatsPerBar">
+                <option value="2">2/4</option>
+                <option value="3">3/4</option>
+                <option value="4">4/4</option>
+                <option value="5">5/4</option>
+                <option value="6">6/4</option>
+                <option value="7">7/4</option>
+              </select>
+            </label>
+            <label>Rhythm grid
+              <select name="subdivision">
+                <option value="auto">Auto</option>
+                <option value="4">Sixteenth notes</option>
+                <option value="3">Triplets</option>
+              </select>
+            </label>
+            <label>Processing
+              <select name="backend">
+                <option value="auto">Auto</option>
+                <option value="webgl">GPU (WebGL)</option>
+                <option value="wasm">CPU (WebAssembly)</option>
+              </select>
+            </label>
+          </form>
+        </details>
+
+        <button id="goBtn" class="primary" disabled>Transcribe</button>
+        <div id="progress" class="progress" hidden>
+          <div class="bar"><div id="progressFill"></div></div>
+          <span id="progressText" class="muted"></span>
+        </div>
+        <p id="error" class="error" role="alert" hidden></p>
+      </section>
+
+      <section id="results" hidden>
+        <div id="summary" class="chips" aria-live="polite"></div>
+
+        <div class="card player">
+          <div id="mediaBox" class="media-box"></div>
+          <div class="transport">
+            <button id="playBtn" class="round" aria-label="Play">
+              <svg viewBox="0 0 24 24"><path id="playIcon" d="M8 5v14l11-7z" /></svg>
+            </button>
+            <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Position" />
+            <span id="time" class="time">0:00</span>
+          </div>
+          <div class="transport-options">
+            <div class="seg" id="sourceSeg" role="group" aria-label="Listen to">
+              <button data-source="original" class="on">Original</button>
+              <button data-source="synth">Transcription</button>
+              <button data-source="both">Both</button>
+            </div>
+            <label class="inline">Speed
+              <select id="speed">
+                <option value="0.5">50%</option>
+                <option value="0.75">75%</option>
+                <option value="1" selected>100%</option>
+              </select>
+            </label>
+            <label class="inline"><input id="follow" type="checkbox" checked /> Follow</label>
+          </div>
+        </div>
+
+        <div class="seg wide" id="trackSeg" role="tablist"></div>
+        <div id="tabView" class="card tabview"></div>
+
+        <details class="card" id="rollCard">
+          <summary>Piano roll <span class="muted">(what was heard)</span></summary>
+          <div class="roll-scroll"><canvas id="roll"></canvas></div>
+          <p class="legend"><span class="sw guitar"></span>Guitar <span class="sw bass"></span>Bass <span class="sw ignored"></span>Ignored (overtones / noise)</p>
+        </details>
+
+        <div class="exports">
+          <button id="exportTxt">Tab (.txt)</button>
+          <button id="exportMidi">MIDI</button>
+          <button id="exportXml">MusicXML</button>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="about">
+      <h2>Tab Transcribe</h2>
+      <p>Pick a recording or video of guitar and/or bass. The app listens for notes with a neural pitch model
+        (Spotify's <em>Basic Pitch</em>), works out which notes belong to the guitar and which to the bass, and writes
+        the most playable fingering as tablature.</p>
+      <p>Everything runs on this device; your recordings are never uploaded.</p>
+      <p class="muted">Tips: isolated or clearly mixed guitar/bass works best. Vocals, keys or heavy distortion can add
+        extra notes. Use <em>Options</em> to force the instrument, tuning, capo or tempo, then check the result with
+        <em>Transcription</em> playback.</p>
+      <form method="dialog"><button class="primary">Close</button></form>
+    </dialog>
+
+    <svg width="0" height="0" style="position:absolute">
+      <symbol id="logo-mark" viewBox="0 0 64 64">
+        <rect x="4" y="4" width="56" height="56" rx="14" fill="currentColor" opacity=".14" />
+        <g stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <line x1="14" y1="20" x2="50" y2="20" /><line x1="14" y1="28" x2="50" y2="28" />
+          <line x1="14" y1="36" x2="50" y2="36" /><line x1="14" y1="44" x2="50" y2="44" />
+        </g>
+        <circle cx="24" cy="28" r="5" fill="#f59e0b" /><circle cx="40" cy="44" r="5" fill="#3b82f6" />
+      </symbol>
+    </svg>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

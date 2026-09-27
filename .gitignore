@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+.vite/
+test-results/
+tests/e2e/out/
+*.apk
+*.aab
+*.keystore
+*.jks
+keystore.properties
