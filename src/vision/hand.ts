@@ -74,9 +74,9 @@ export function toHints(observations: HandObservation[], trackOk: (i: number) =>
   observations.forEach((o, i) => {
     if (o.from !== null && o.to !== null) {
       const hi = Math.ceil(o.to) + 1;
-      hints.push({ time: o.time, lo: o.cutOff ? 0 : Math.max(0, Math.floor(o.from)), hi, confidence: o.confidence });
+      hints.push({ time: o.time, lo: o.cutOff ? 0 : Math.max(0, Math.floor(o.from)), hi, confidence: o.confidence, seen: true });
     } else if (trackOk(i) && Number.isFinite(o.visibleFrom) && o.visibleFrom > 0.5) {
-      hints.push({ time: o.time, lo: 0, hi: Math.ceil(o.visibleFrom) + 1, confidence: 0.4 });
+      hints.push({ time: o.time, lo: 0, hi: Math.ceil(o.visibleFrom) + 1, confidence: 0.4, seen: false });
     }
   });
   return hints;

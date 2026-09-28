@@ -8,7 +8,7 @@ import { toMidi } from './export/midi';
 import { toMusicXml } from './export/musicxml';
 import { toTabText } from './export/text';
 import { DEFAULT_SETTINGS, interpret, type InterpretSettings, type Transcription } from './music/interpret';
-import { BASS_TUNINGS, GUITAR_TUNINGS, type InstrumentKind } from './music/tunings';
+import { ANY_TUNING, BASS_TUNINGS, GUITAR_TUNINGS, STANDARD_ANY_STRINGS, type InstrumentKind } from './music/tunings';
 import { saveFile } from './platform/save';
 import { CalibrationView } from './ui/calibrate';
 import { NeckOverlay } from './ui/neckOverlay';
@@ -26,7 +26,9 @@ interface AppSettings extends InterpretSettings {
   filmedInstrument: InstrumentKind;
 }
 
-const STORAGE_KEY = 'tab-transcribe.settings.v1';
+const STORAGE_KEY = 'tab-transcribe.settings.v2';
+/** Settings saved by earlier versions (their tuning default was "guess any tuning"). */
+const OLD_STORAGE_KEY = 'tab-transcribe.settings.v1';
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const els = {
@@ -123,7 +125,12 @@ function fmt(sec: number): string {
 function loadSettings(): AppSettings {
   const defaults: AppSettings = { ...DEFAULT_SETTINGS, sensitivity: 'normal', backend: 'auto', playthrough: false, filmedInstrument: 'bass' };
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+    let saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null');
+    if (!saved) {
+      // Older versions defaulted to guessing any tuning; the default is now standard tuning.
+      saved = JSON.parse(localStorage.getItem(OLD_STORAGE_KEY) ?? '{}');
+      for (const key of ['guitarTuning', 'bassTuning']) if (saved[key] === ANY_TUNING) delete saved[key];
+    }
     return { ...defaults, ...saved };
   } catch {
     return defaults;
@@ -140,11 +147,15 @@ function saveSettings() {
 
 // ---- Settings form -------------------------------------------------------------------
 
-function fillTuningSelect(select: HTMLSelectElement, tunings: typeof GUITAR_TUNINGS) {
-  select.replaceChildren(new Option('Auto-detect', 'auto'), ...tunings.map((t) => new Option(t.name, t.id)));
+function fillTuningSelect(select: HTMLSelectElement, tunings: typeof GUITAR_TUNINGS, standardLabel: string) {
+  select.replaceChildren(
+    new Option(standardLabel, STANDARD_ANY_STRINGS),
+    ...tunings.map((t) => new Option(t.name, t.id)),
+    new Option('Guess any tuning from the notes', ANY_TUNING),
+  );
 }
-fillTuningSelect(els.form.elements.namedItem('guitarTuning') as HTMLSelectElement, GUITAR_TUNINGS);
-fillTuningSelect(els.form.elements.namedItem('bassTuning') as HTMLSelectElement, BASS_TUNINGS);
+fillTuningSelect(els.form.elements.namedItem('guitarTuning') as HTMLSelectElement, GUITAR_TUNINGS, 'Standard (6 or 7 strings, detected)');
+fillTuningSelect(els.form.elements.namedItem('bassTuning') as HTMLSelectElement, BASS_TUNINGS, 'Standard (4 or 5 strings, detected)');
 
 function writeForm() {
   const s = state.settings;

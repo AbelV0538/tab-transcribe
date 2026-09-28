@@ -11,6 +11,11 @@ export interface HandHint {
   lo: number;
   hi: number;
   confidence: number;
+  /**
+   * True when the hand was located on the board in the frame. False when it wasn't there and is
+   * only assumed to be at the nut, off screen: a weaker kind of evidence.
+   */
+  seen: boolean;
 }
 
 export interface Playthrough {
@@ -21,6 +26,11 @@ export interface Playthrough {
 
 /** Hints below this confidence are ignored. */
 const MIN_CONFIDENCE = 0.3;
+/**
+ * Overruling the octave the audio heard needs a hand that was actually seen, with at least this
+ * confidence. Weaker hand evidence only makes an unplayable note count for less.
+ */
+const OCTAVE_MIN_CONFIDENCE = 0.6;
 
 /**
  * The hand window for a note starting at `time`: the most confident hint from shortly before
@@ -70,8 +80,8 @@ export interface CorrectionResult {
 
 /**
  * Check every note in the filmed instrument's range against the hand position. A note the
- * hand can't be playing is moved by an octave if that fits (the note detector often reports
- * a bass note an octave off), otherwise it is down-weighted.
+ * hand can't be playing is moved by an octave if that fits and the hand was clearly seen (the
+ * note detector often reports a bass note an octave off); otherwise it is down-weighted.
  */
 export function correctWithHands(
   notes: RawNote[],
@@ -97,7 +107,8 @@ export function correctWithHands(
       weights.push(1 + 0.5 * hint.confidence);
       return n;
     }
-    for (const alt of [n.pitch - 12, n.pitch + 12]) {
+    const trusted = hint.seen && hint.confidence >= OCTAVE_MIN_CONFIDENCE;
+    for (const alt of trusted ? [n.pitch - 12, n.pitch + 12] : []) {
       if (alt >= low && alt <= high && pitchMiss(alt, tuning, capo, frets, hint) === 0) {
         octaveFixes++;
         weights.push(1 + 0.3 * hint.confidence);

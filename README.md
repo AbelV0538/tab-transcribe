@@ -103,7 +103,7 @@ The production build is a static site, so any static host works. Served over HTT
 1. Tap **Choose an audio or video file**: MP3, M4A/AAC, WAV, FLAC, Ogg/Opus, MP4, MOV, WebM or MKV. Anything the device can play will work.
 2. (Optional) Open **Options** to override the defaults:
    - **Instrument**: auto-detect, guitar only, bass only, or guitar + bass.
-   - **Guitar/Bass tuning**: auto, or a fixed tuning such as standard, drop D, E♭, D standard, drop C, 7-string, DADGAD or open tunings; for bass, 4/5/6-string and drop tunings.
+   - **Guitar/Bass tuning**: by default, standard tuning. The app decides only the number of strings: a 5-string bass (B E A D G) or 7-string guitar when there are low notes only the extra string can play. You can also pick a fixed tuning (4/5/6-string bass, 6/7-string guitar, drop D, E♭, D standard, drop C, DADGAD, open tunings) or let the app guess any tuning from the notes.
    - **Capo** for guitar. Frets are then shown relative to the capo.
    - **Note sensitivity**: *Low* keeps only clear notes; *High* also picks up quiet ghost notes.
    - **Tempo**, **time signature** and **rhythm grid** (16ths or triplets). All default to automatic.
@@ -130,7 +130,7 @@ If the video shows someone playing the bass or guitar, the footage can correct t
 The app then follows the neck through the video and finds where the fretting hand covers the fretboard. It uses that position in three ways:
 
 - It places notes on the strings and frets under the hand, instead of wherever is easiest.
-- It moves a note up or down an octave when the hand can't be playing it where it was heard. The note detector often gets bass notes an octave wrong.
+- It moves a note up or down an octave when the hand can't be playing it where it was heard. The note detector often gets bass notes an octave wrong. This only happens when the hand was clearly seen on the board. When the hand is out of view and only assumed to be near the nut, the note is kept and counts for less.
 - It always shows a track for the filmed instrument.
 
 While playing back, **Neck overlay** draws the tracked frets and the detected hand over the video, so you can check them.

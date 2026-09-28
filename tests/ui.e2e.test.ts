@@ -281,6 +281,21 @@ describe('web app', () => {
     await page.close();
   }, 300_000);
 
+  it('moves settings saved by older versions to standard tuning', async () => {
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      if (!localStorage.getItem('tab-transcribe.settings.v2')) {
+        localStorage.setItem('tab-transcribe.settings.v1', JSON.stringify({ bassTuning: 'auto', guitarTuning: 'dropD', capo: 2 }));
+      }
+    });
+    await page.goto(base);
+    // The old default ("guess any tuning") becomes standard; deliberate choices are kept.
+    expect(await page.locator('select[name=bassTuning]').inputValue()).toBe('standard-auto');
+    expect(await page.locator('select[name=guitarTuning]').inputValue()).toBe('dropD');
+    expect(await page.locator('input[name=capo]').inputValue()).toBe('2');
+    await page.close();
+  });
+
   it('accepts a video file', async () => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await page.goto(base);

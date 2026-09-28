@@ -7,7 +7,7 @@ import { BASS_TUNINGS } from '../src/music/tunings';
 import { note } from './helpers/notes';
 
 const bass = BASS_TUNINGS[0];
-const hint = (time: number, lo: number, hi: number, confidence = 0.9): HandHint => ({ time, lo, hi, confidence });
+const hint = (time: number, lo: number, hi: number, confidence = 0.9, seen = true): HandHint => ({ time, lo, hi, confidence, seen });
 
 describe('hand hints', () => {
   const hints = [hint(0, 0, 3), hint(0.5, 5, 8, 0.5), hint(0.6, 5, 8, 0.95), hint(2, 10, 13)];
@@ -53,6 +53,21 @@ describe('note correction', () => {
     expect(r.octaveFixes).toBe(1);
     expect(r.covered).toBe(2);
   });
+  it('only overrules the heard octave when the hand was clearly seen', () => {
+    const heard = [note(52, 0)];
+    // Hand only assumed to be at the nut (not seen on the board): the note is kept, down-weighted.
+    const assumed = correctWithHands(heard, { instrument: 'bass', hints: [hint(0, 0, 4, 0.4, false)] }, bass, 0, 21);
+    expect(assumed.notes[0].pitch).toBe(52);
+    expect(assumed.octaveFixes).toBe(0);
+    expect(assumed.weights[0]).toBeLessThan(1);
+    // Seen, but not confidently.
+    const unsure = correctWithHands(heard, { instrument: 'bass', hints: [hint(0, 0, 4, 0.5)] }, bass, 0, 21);
+    expect(unsure.notes[0].pitch).toBe(52);
+    // Clearly seen: moved to E2.
+    const sure = correctWithHands(heard, { instrument: 'bass', hints: [hint(0, 0, 4, 0.8)] }, bass, 0, 21);
+    expect(sure.notes[0].pitch).toBe(40);
+  });
+
   it('moves notes down an octave too', () => {
     // B1 (35) only exists at E7; B2 (47) is A14, under a hand at frets 12-15.
     const r = correctWithHands([note(35, 0)], { instrument: 'bass', hints: [hint(0, 12, 15)] }, bass, 0, 21);

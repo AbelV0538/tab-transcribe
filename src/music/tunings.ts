@@ -29,7 +29,7 @@ export const GUITAR_TUNINGS: Tuning[] = [
 
 export const BASS_TUNINGS: Tuning[] = [
   { id: 'standard', name: 'Standard 4-string (E A D G)', instrument: 'bass', strings: [28, 33, 38, 43], popularity: 1, auto: true },
-  { id: 'fiveString', name: '5-string (B E A D G)', instrument: 'bass', strings: [23, 28, 33, 38, 43], popularity: 0.3, auto: true },
+  { id: 'fiveString', name: 'Standard 5-string (B E A D G)', instrument: 'bass', strings: [23, 28, 33, 38, 43], popularity: 0.3, auto: true },
   { id: 'dropD', name: 'Drop D (D A D G)', instrument: 'bass', strings: [26, 33, 38, 43], popularity: 0.2, auto: true },
   { id: 'eb', name: 'E♭ standard (half step down)', instrument: 'bass', strings: [27, 32, 37, 42], popularity: 0.15, auto: true },
   { id: 'dStandard', name: 'D standard (D G C F)', instrument: 'bass', strings: [26, 31, 36, 41], popularity: 0.06, auto: true },
@@ -37,6 +37,11 @@ export const BASS_TUNINGS: Tuning[] = [
 ];
 
 export const DEFAULT_FRETS: Record<InstrumentKind, number> = { guitar: 22, bass: 21 };
+
+/** Default tuning choice: standard tuning, with the number of strings decided from the notes. */
+export const STANDARD_ANY_STRINGS = 'standard-auto';
+/** Tuning choice that lets the app guess any tuning (drop D, E♭, …) from the notes. */
+export const ANY_TUNING = 'auto';
 
 export function tuningsFor(instrument: InstrumentKind): Tuning[] {
   return instrument === 'guitar' ? GUITAR_TUNINGS : BASS_TUNINGS;
@@ -52,6 +57,27 @@ export function stringLabels(tuning: Tuning): string[] {
   const last = names.length - 1;
   if (names[last] === names[0]) names[last] = names[last].toLowerCase();
   return names;
+}
+
+/**
+ * Standard tuning for an instrument, with the extra low string (5-string bass B, 7-string guitar
+ * B) when the notes go below the usual lowest string: a couple of notes, at least 1% of them,
+ * that only the extra string can play.
+ */
+export function standardTuning(instrument: InstrumentKind, pitches: number[]): Tuning {
+  const [usual, extended] = instrument === 'bass' ? ['standard', 'fiveString'] : ['standard', 'sevenString'];
+  const normal = findTuning(instrument, usual)!;
+  const extra = findTuning(instrument, extended)!;
+  const below = pitches.filter((p) => p < normal.strings[0] && p >= extra.strings[0]).length;
+  return below >= 2 && below >= 0.01 * pitches.length ? extra : normal;
+}
+
+/** The tuning for a setting value (a tuning id, STANDARD_ANY_STRINGS or ANY_TUNING). */
+export function resolveTuning(instrument: InstrumentKind, choice: string, pitches: number[], frets = DEFAULT_FRETS[instrument]): { tuning: Tuning; automatic: boolean } {
+  if (choice === ANY_TUNING) return { tuning: autoSelectTuning(instrument, pitches, frets), automatic: true };
+  const fixed = findTuning(instrument, choice);
+  if (fixed) return { tuning: fixed, automatic: false };
+  return { tuning: standardTuning(instrument, pitches), automatic: true };
 }
 
 /**
