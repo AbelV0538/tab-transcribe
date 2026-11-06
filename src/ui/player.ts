@@ -4,10 +4,16 @@
  * pitch (media element pitch correction) and re-render the synth at the slower tempo.
  */
 import { synthesize, type SynthNote } from '../audio/synth';
+import { encodeWav } from '../audio/wav';
 
-export type Source = 'original' | 'synth' | 'both';
+/** What to listen to; the stem sources play an isolated instrument from the separation. */
+export type Source = 'original' | 'synth' | 'both' | 'guitarStem' | 'bassStem';
+
+export type StemKind = 'guitar' | 'bass';
 
 export class Player {
+  /** Separated stems, played through their own (hidden) media elements so slow speeds keep the pitch. */
+  private stems = new Map<StemKind, { url: string; el: HTMLAudioElement }>();
   private media: HTMLMediaElement | null = null;
   private url: string | null = null;
   private ctx: AudioContext | null = null;
@@ -62,7 +68,46 @@ export class Player {
   setTranscription(notes: SynthNote[]): void {
     this.synthNotes = notes;
     this.synthBuffer = null;
-    if (this.playing && this.source !== 'original') this.restartSynth();
+    if (this.playing && this.synthOn) this.restartSynth();
+  }
+
+  /** Make the separated stems (mono PCM at `sampleRate`) available as sources, or remove them. */
+  setStems(stems: Record<StemKind, Float32Array> | null, sampleRate: number): void {
+    const wasPlaying = this.playing;
+    if (wasPlaying) this.pause();
+    for (const s of this.stems.values()) {
+      s.el.pause();
+      s.el.removeAttribute('src');
+      URL.revokeObjectURL(s.url);
+    }
+    this.stems.clear();
+    if (stems) {
+      for (const kind of ['guitar', 'bass'] as const) {
+        const url = URL.createObjectURL(new Blob([encodeWav(stems[kind], sampleRate) as Uint8Array<ArrayBuffer>], { type: 'audio/wav' }));
+        const el = document.createElement('audio');
+        el.src = url;
+        el.preload = 'auto';
+        (el as HTMLMediaElement & { preservesPitch?: boolean }).preservesPitch = true;
+        this.stems.set(kind, { url, el });
+      }
+    } else if (this.source === 'guitarStem' || this.source === 'bassStem') {
+      this.source = 'original';
+    }
+    if (wasPlaying) void this.play();
+  }
+
+  get hasStems(): boolean {
+    return this.stems.size > 0;
+  }
+
+  private get synthOn(): boolean {
+    return this.source === 'synth' || this.source === 'both';
+  }
+
+  private stemElement(): HTMLAudioElement | null {
+    if (this.source === 'guitarStem') return this.stems.get('guitar')?.el ?? null;
+    if (this.source === 'bassStem') return this.stems.get('bass')?.el ?? null;
+    return null;
   }
 
   get isPlaying(): boolean {
@@ -126,13 +171,20 @@ export class Player {
     const ctx = this.audioContext();
     if (ctx.state === 'suspended') await ctx.resume();
     const at = this.position >= this.duration - 0.05 ? 0 : this.position;
+    const stem = this.stemElement();
     if (this.source !== 'synth' && this.media) {
+      // With a stem playing, the original runs muted as the clock (and keeps a video moving).
       this.media.playbackRate = this.rate;
       this.media.currentTime = at;
-      this.media.muted = false;
+      this.media.muted = !!stem;
       await this.media.play();
     }
-    if (this.source !== 'original') this.startSynth(at);
+    if (stem) {
+      stem.playbackRate = this.rate;
+      stem.currentTime = at;
+      await stem.play();
+    }
+    if (this.synthOn) this.startSynth(at);
     this.playing = true;
     this.onState(true);
     const tick = () => {
@@ -142,11 +194,14 @@ export class Player {
         this.pause();
         return;
       }
-      // Keep the synth locked to the media clock when both play.
-      if (this.source === 'both' && this.ctx && performance.now() - this.lastDriftCheck > 1000) {
+      // Keep the synth or the stem locked to the media clock.
+      if (performance.now() - this.lastDriftCheck > 1000) {
         this.lastDriftCheck = performance.now();
-        const synthTime = this.synthOrigin.song + (this.ctx.currentTime - this.synthOrigin.ctx) * this.rate;
-        if (Math.abs(synthTime - now) > 0.08) this.startSynth(now);
+        if (this.source === 'both' && this.ctx) {
+          const synthTime = this.synthOrigin.song + (this.ctx.currentTime - this.synthOrigin.ctx) * this.rate;
+          if (Math.abs(synthTime - now) > 0.08) this.startSynth(now);
+        }
+        if (stem && Math.abs(stem.currentTime - now) > 0.08) stem.currentTime = now;
       }
       this.onTime(now);
       this.raf = requestAnimationFrame(tick);
@@ -165,6 +220,7 @@ export class Player {
     this.playing = false;
     cancelAnimationFrame(this.raf);
     this.media?.pause();
+    for (const s of this.stems.values()) s.el.pause();
     this.stopSynth();
     this.onState(false);
   }

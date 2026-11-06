@@ -11,7 +11,7 @@ export default defineConfig({
   },
   test: {
     include: ['tests/**/*.test.ts'],
-    exclude: ['tests/**/*.model.test.ts', 'tests/**/*.e2e.test.ts', 'node_modules/**'],
+    exclude: ['tests/**/*.model.test.ts', 'tests/**/*.e2e.test.ts', 'tests/**/*.album.test.ts', 'tests/album/**', 'node_modules/**'],
     environment: 'node',
   },
 });

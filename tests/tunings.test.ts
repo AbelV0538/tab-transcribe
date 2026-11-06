@@ -32,5 +32,18 @@ describe('tuning selection', () => {
   it('labels strings', () => {
     expect(stringLabels(GUITAR_TUNINGS[0])).toEqual(['E', 'A', 'D', 'G', 'B', 'e']);
     expect(stringLabels(BASS_TUNINGS[0])).toEqual(['E', 'A', 'D', 'G']);
+    expect(stringLabels(GUITAR_TUNINGS.find((t) => t.id === 'eightStringDropE')!)).toEqual(['E', 'B', 'E', 'A', 'D', 'G', 'B', 'e']);
+  });
+  it('offers extended-range tunings without guessing them', () => {
+    for (const id of ['csStandard', 'sevenStringDropA', 'sevenStringA', 'eightString', 'eightStringDropE', 'eightStringDropEb']) {
+      const t = GUITAR_TUNINGS.find((x) => x.id === id)!;
+      expect(t.auto).toBe(false);
+      // Each ascends string by string.
+      expect(t.strings.every((p, i) => i === 0 || p > t.strings[i - 1])).toBe(true);
+    }
+    // Low notes (E1) never select an 8-string tuning, by default or with "guess any tuning".
+    const riff = [28, 28, 35, 40, 28, 35, 40, 47];
+    expect(resolveTuning('guitar', STANDARD_ANY_STRINGS, riff).tuning.id).toBe('sevenString');
+    expect(autoSelectTuning('guitar', riff).id).not.toMatch(/eight/);
   });
 });

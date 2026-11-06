@@ -25,6 +25,12 @@ export const GUITAR_TUNINGS: Tuning[] = [
   { id: 'openG', name: 'Open G (D G D G B D)', instrument: 'guitar', strings: [38, 43, 50, 55, 59, 62], popularity: 0.05, auto: false },
   { id: 'openD', name: 'Open D (D A D F# A D)', instrument: 'guitar', strings: [38, 45, 50, 54, 57, 62], popularity: 0.04, auto: false },
   { id: 'openE', name: 'Open E (E B E G# B E)', instrument: 'guitar', strings: [40, 47, 52, 56, 59, 64], popularity: 0.03, auto: false },
+  { id: 'csStandard', name: 'C# standard (C# F# B E G# C#)', instrument: 'guitar', strings: [37, 42, 47, 52, 56, 61], popularity: 0.05, auto: false },
+  { id: 'sevenStringDropA', name: '7-string drop A (A E A D G B E)', instrument: 'guitar', strings: [33, 40, 45, 50, 55, 59, 64], popularity: 0.04, auto: false },
+  { id: 'sevenStringA', name: '7-string A standard (A D G C F A D)', instrument: 'guitar', strings: [33, 38, 43, 48, 53, 57, 62], popularity: 0.03, auto: false },
+  { id: 'eightString', name: '8-string standard (F# B E A D G B E)', instrument: 'guitar', strings: [30, 35, 40, 45, 50, 55, 59, 64], popularity: 0.03, auto: false },
+  { id: 'eightStringDropE', name: '8-string drop E (E B E A D G B E)', instrument: 'guitar', strings: [28, 35, 40, 45, 50, 55, 59, 64], popularity: 0.02, auto: false },
+  { id: 'eightStringDropEb', name: '8-string drop E♭ (E♭ B♭ E♭ A♭ D♭ G♭ B♭ E♭)', instrument: 'guitar', strings: [27, 34, 39, 44, 49, 54, 58, 63], popularity: 0.01, auto: false },
 ];
 
 export const BASS_TUNINGS: Tuning[] = [

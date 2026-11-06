@@ -22,7 +22,16 @@ export interface NoteFeatures {
   onsetStrength: number;
   /** Deviation in cents of the measured pitch from the equal-tempered pitch, if measurable. */
   cents: number | null;
+  /**
+   * For notes heard in a separated stem: amplitude of the note's harmonics in the stem relative
+   * to the full mix (about 1 when the stem holds the note, near 0 for faint leftovers of an
+   * instrument that is really in another stem).
+   */
+  stemShare?: number;
 }
+
+/** Separated stem a note was detected in (see src/separation). */
+export type NoteStem = 'guitar' | 'bass';
 
 /** A note as detected by the neural transcription model (instrument-agnostic). */
 export interface RawNote {
@@ -35,6 +44,8 @@ export interface RawNote {
   /** Mean model activation over the note, 0..1. */
   amplitude: number;
   features: NoteFeatures;
+  /** The stem the note was heard in, when the recording was separated into instruments first. */
+  stem?: NoteStem;
 }
 
 export type Sensitivity = 'low' | 'normal' | 'high';
@@ -89,4 +100,6 @@ export interface AudioAnalysis {
   tuningCents: number | null;
   /** Which TensorFlow.js backend ran the model. */
   backend: string;
+  /** True when notes were detected in separated guitar and bass stems instead of the mix. */
+  separated?: boolean;
 }

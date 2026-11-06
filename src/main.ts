@@ -10,6 +10,10 @@ import { toTabText } from './export/text';
 import { DEFAULT_SETTINGS, interpret, type InterpretSettings, type Transcription } from './music/interpret';
 import { ANY_TUNING, BASS_TUNINGS, GUITAR_TUNINGS, STANDARD_ANY_STRINGS, type InstrumentKind } from './music/tunings';
 import { saveFile } from './platform/save';
+import { separateStems } from './separation/client';
+import { SEPARATION_RATE } from './separation/demucs';
+import { shouldSeparate, type SeparationSetting } from './separation/policy';
+import { instrumentStems, type InstrumentStems } from './separation/stems';
 import { CalibrationView } from './ui/calibrate';
 import { NeckOverlay } from './ui/neckOverlay';
 import { PianoRoll } from './ui/pianoRoll';
@@ -21,6 +25,8 @@ import { isVideoFile } from './vision/video';
 interface AppSettings extends InterpretSettings {
   sensitivity: Sensitivity;
   backend: BackendPreference;
+  /** Split the recording into instrument stems before listening for notes. */
+  separation: SeparationSetting;
   /** Use a playthrough video's footage to correct the tab. */
   playthrough: boolean;
   filmedInstrument: InstrumentKind;
@@ -79,6 +85,8 @@ const state: {
   visible: InstrumentKind[];
   busy: boolean;
   settings: AppSettings;
+  /** How the current analysis was separated, or why separating failed. */
+  separation: { provider: string; seconds: number; guitarFrom: readonly string[] } | { error: string } | null;
 } = {
   file: null,
   analysis: null,
@@ -91,7 +99,11 @@ const state: {
   visible: [],
   busy: false,
   settings: loadSettings(),
+  separation: null,
 };
+
+/** Development aid: `?debug=fail-gpu-separation` makes the GPU separation fail (tests the fallbacks). */
+const SIMULATE_GPU_FAILURE = new URLSearchParams(location.search).get('debug') === 'fail-gpu-separation';
 
 const engine = new EngineClient();
 const overlay = new NeckOverlay(els.mediaBox);
@@ -123,7 +135,7 @@ function fmt(sec: number): string {
 }
 
 function loadSettings(): AppSettings {
-  const defaults: AppSettings = { ...DEFAULT_SETTINGS, sensitivity: 'normal', backend: 'auto', playthrough: false, filmedInstrument: 'bass' };
+  const defaults: AppSettings = { ...DEFAULT_SETTINGS, sensitivity: 'normal', backend: 'auto', separation: 'auto', playthrough: false, filmedInstrument: 'bass' };
   try {
     let saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null');
     if (!saved) {
@@ -169,6 +181,7 @@ function writeForm() {
   set('beatsPerBar', String(s.beatsPerBar));
   set('subdivision', String(s.subdivision));
   set('backend', s.backend);
+  set('separation', s.separation);
   els.playthrough.checked = s.playthrough;
   els.filmedInstrument.value = s.filmedInstrument;
 }
@@ -187,6 +200,7 @@ function readForm(): AppSettings {
     beatsPerBar: parseInt(get('beatsPerBar'), 10) || 4,
     subdivision: sub === 'auto' ? 'auto' : (parseInt(sub, 10) as 3 | 4),
     backend: get('backend') as BackendPreference,
+    separation: (['auto', 'on', 'off'].includes(get('separation')) ? get('separation') : 'auto') as SeparationSetting,
     playthrough: els.playthrough.checked,
     filmedInstrument: els.filmedInstrument.value === 'guitar' ? 'guitar' : 'bass',
   };
@@ -312,13 +326,17 @@ els.go.addEventListener('click', () => {
   }
   void runStep(async () => {
     player.pause();
-    const audioKey = `${fileKey(file)}|${state.settings.sensitivity}|${state.settings.backend}`;
+    const separate = shouldSeparate(state.settings.separation);
+    const audioKey = `${fileKey(file)}|${state.settings.sensitivity}|${state.settings.backend}|${separate ? 'separated' : 'mix'}`;
     if (!state.analysis || state.analysedKey !== audioKey) {
-      const decoded = await decodeFile(file, MODEL_SAMPLE_RATE, showProgress, ctx);
+      const decoded = await decodeFile(file, MODEL_SAMPLE_RATE, showProgress, ctx, separate ? { stereoRate: SEPARATION_RATE } : {});
       if (decoded.duration < 0.5) throw new Error('The recording is too short or has no audio track.');
       player.load(file, decoded.duration);
       overlay.attach(els.mediaBox.querySelector('video'));
-      state.analysis = await engine.analyze(decoded.samples, state.settings.sensitivity, state.settings.backend, showProgress);
+      const stems = separate && decoded.stereo ? await separateInstruments(decoded.stereo) : null;
+      decoded.stereo = undefined;
+      if (!separate) state.separation = null;
+      state.analysis = await analyseAudio(decoded.samples, stems);
       state.analysedSensitivity = state.settings.sensitivity;
       state.analysedKey = audioKey;
     }
@@ -341,6 +359,47 @@ function fileKey(file: File): string {
   return `${file.name}|${file.size}|${file.lastModified}`;
 }
 
+/**
+ * Split the recording into guitar and bass stems. Never fatal: if it fails (no model and no
+ * network, not enough memory…), the full mix is transcribed and the summary says why.
+ */
+async function separateInstruments(stereo: { left: Float32Array; right: Float32Array }): Promise<InstrumentStems | null> {
+  try {
+    const backend = state.settings.backend;
+    const r = await separateStems(stereo.left, stereo.right, {
+      allowGpu: backend === 'auto' || backend === 'webgl',
+      onProgress: showProgress,
+      simulateGpuFailure: SIMULATE_GPU_FAILURE,
+    });
+    const stems = instrumentStems(r.stems);
+    state.separation = { provider: r.provider, seconds: r.seconds, guitarFrom: stems.guitarFrom };
+    return stems;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn('[separate] giving up, transcribing the full mix:', message);
+    state.separation = { error: message };
+    return null;
+  }
+}
+
+async function analyseAudio(samples: Float32Array, stems: InstrumentStems | null): Promise<AudioAnalysis> {
+  const { sensitivity, backend } = state.settings;
+  if (stems) {
+    try {
+      const analysis = await engine.analyze(samples, sensitivity, backend, showProgress, stems);
+      player.setStems(stems, MODEL_SAMPLE_RATE);
+      return analysis;
+    } catch (err) {
+      // Listening to two stems needs more memory than the mix alone: try once more without.
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[separate] note detection on the stems failed, retrying on the full mix:', message);
+      state.separation = { error: message };
+    }
+  }
+  player.setStems(null, MODEL_SAMPLE_RATE);
+  return engine.analyze(samples, sensitivity, backend, showProgress);
+}
+
 /** The video analysis, if it belongs to the current file and the option is on. */
 function activeVideo(): VideoAnalysis | null {
   const file = state.file;
@@ -360,6 +419,7 @@ function reinterpret(resetVisible = false) {
   if (resetVisible || state.visible.length === 0 || !state.visible.every((v) => present.includes(v))) state.visible = present.slice(0, 1);
   renderSummary(t);
   renderTrackSeg(t);
+  updateSourceButtons();
   tabView.render(t, state.visible);
   if (els.rollCard.open) roll.draw(state.analysis, t);
   player.setTranscription(
@@ -394,6 +454,17 @@ function renderSummary(t: Transcription) {
     const pct = v.notes ? Math.round((100 * v.notesWithHand) / v.notes) : 0;
     const c = chip(`Video: hand position used for ${pct}% of ${name} notes${v.octaveFixes ? ` · ${v.octaveFixes} octave fixes` : ''}`, 'video');
     c.title = `Neck tracked in ${Math.round(100 * (activeVideo()?.tracked ?? 0))}% of frames`;
+  }
+  const sep = state.separation;
+  if (state.analysis?.separated && sep && 'provider' in sep) {
+    const c = chip(`Instruments separated first (${sep.provider === 'webgpu' ? 'GPU' : 'CPU'}, ${fmt(sep.seconds)})`);
+    c.title =
+      sep.guitarFrom.length > 1
+        ? 'Notes were detected in isolated stems. The guitar was hard to tell apart from keys and other instruments, so the guitar tab may contain some of their notes.'
+        : 'Notes were detected in isolated guitar and bass stems, so vocals, keys and drums could not add wrong notes.';
+  } else if (sep && 'error' in sep) {
+    const c = chip('Could not separate the instruments: transcribed the full mix', 'warn');
+    c.title = sep.error;
   }
   if (t.tuningCents !== null && Math.abs(t.tuningCents) >= 8) {
     chip(`Reference pitch A4 = ${(440 * 2 ** (t.tuningCents / 1200)).toFixed(1)} Hz`);
@@ -433,9 +504,17 @@ els.speed.addEventListener('change', () => player.setRate(Number(els.speed.value
 els.sourceSeg.addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest('button');
   if (!b) return;
-  for (const x of els.sourceSeg.querySelectorAll('button')) x.classList.toggle('on', x === b);
   player.setSource(b.dataset.source as Source);
+  updateSourceButtons();
 });
+
+/** Stem buttons only when there are stems; highlight what the player is playing. */
+function updateSourceButtons() {
+  for (const x of els.sourceSeg.querySelectorAll<HTMLButtonElement>('button')) {
+    if (x.dataset.source === 'guitarStem' || x.dataset.source === 'bassStem') x.hidden = !player.hasStems;
+    x.classList.toggle('on', x.dataset.source === player.source);
+  }
+}
 els.rollCard.addEventListener('toggle', () => {
   if (els.rollCard.open && state.analysis && state.transcription) {
     roll.draw(state.analysis, state.transcription);

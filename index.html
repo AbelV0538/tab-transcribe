@@ -60,6 +60,13 @@
                 <option value="both">Guitar + bass</option>
               </select>
             </label>
+            <label title="Splits the recording into instrument stems on this device before listening for notes, so vocals, keys and drums can't turn into wrong notes. Much cleaner tabs from full band mixes, but slower; the first time it downloads a 136 MB model.">Separate instruments first
+              <select name="separation">
+                <option value="auto">Auto (on for computers)</option>
+                <option value="on">On — cleaner tabs from band mixes</option>
+                <option value="off">Off — faster</option>
+              </select>
+            </label>
             <label>Guitar tuning <select name="guitarTuning"></select></label>
             <label>Bass tuning <select name="bassTuning"></select></label>
             <label>Capo (guitar)
@@ -127,6 +134,8 @@
               <button data-source="original" class="on">Original</button>
               <button data-source="synth">Transcription</button>
               <button data-source="both">Both</button>
+              <button data-source="guitarStem" hidden>Guitar stem</button>
+              <button data-source="bassStem" hidden>Bass stem</button>
             </div>
             <label class="inline">Speed
               <select id="speed">

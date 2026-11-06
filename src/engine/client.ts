@@ -1,4 +1,5 @@
 /** Main-thread wrapper around the analysis worker. */
+import type { InstrumentStems } from '../separation/stems';
 import type { AudioAnalysis, Sensitivity } from './types';
 import type { BackendPreference, WorkerRequest, WorkerResponse } from './workerProtocol';
 
@@ -50,11 +51,14 @@ export class EngineClient {
     sensitivity: Sensitivity,
     backend: BackendPreference,
     onProgress?: (stage: string, fraction: number) => void,
+    stems?: InstrumentStems,
   ): Promise<AudioAnalysis> {
     const modelUrl = new URL('models/basic-pitch/model.json', document.baseURI).href;
-    // Send a copy: the caller keeps its buffer for playback/visualisation.
+    // Send copies: the caller keeps its buffers for playback/visualisation.
     const copy = new Float32Array(audio);
-    return this.request({ type: 'analyze', id: this.nextId++, audio: copy, sensitivity, backend, modelUrl }, onProgress, [copy.buffer]);
+    const stemCopies = stems ? { guitar: new Float32Array(stems.guitar), bass: new Float32Array(stems.bass), guitarFrom: [...stems.guitarFrom] } : undefined;
+    const transfer: Transferable[] = [copy.buffer, ...(stemCopies ? [stemCopies.guitar.buffer, stemCopies.bass.buffer] : [])];
+    return this.request({ type: 'analyze', id: this.nextId++, audio: copy, sensitivity, backend, modelUrl, stems: stemCopies }, onProgress, transfer);
   }
 
   redecode(sensitivity: Sensitivity, onProgress?: (stage: string, fraction: number) => void): Promise<AudioAnalysis> {

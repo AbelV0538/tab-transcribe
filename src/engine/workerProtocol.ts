@@ -1,3 +1,4 @@
+import type { InstrumentStems } from '../separation/stems';
 import type { AudioAnalysis, Sensitivity } from './types';
 
 export type BackendPreference = 'auto' | 'webgl' | 'wasm' | 'cpu';
@@ -11,6 +12,8 @@ export type WorkerRequest =
       sensitivity: Sensitivity;
       backend: BackendPreference;
       modelUrl: string;
+      /** Separated guitar and bass stems (mono, 22.05 kHz) to detect notes in, instead of `audio`. */
+      stems?: InstrumentStems;
     }
   | { type: 'redecode'; id: number; sensitivity: Sensitivity };
 

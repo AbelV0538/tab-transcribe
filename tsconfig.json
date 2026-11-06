@@ -16,5 +16,5 @@
     "noEmit": true,
     "allowImportingTsExtensions": false
   },
-  "include": ["src", "tests", "vite.config.ts", "vitest.model.config.ts", "vitest.e2e.config.ts", "capacitor.config.ts"]
+  "include": ["src", "tests", "vite.config.ts", "vitest.model.config.ts", "vitest.e2e.config.ts", "vitest.album.config.ts", "capacitor.config.ts"]
 }

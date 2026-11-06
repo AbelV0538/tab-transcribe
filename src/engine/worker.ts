@@ -98,7 +98,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     if (req.type === 'analyze') {
       progress('Loading note-detection model', 0);
       const a = await prepare(req.backend, req.modelUrl);
-      const analysis = await a.analyze(req.audio, req.sensitivity, progress);
+      const analysis = await a.analyze(req.audio, req.sensitivity, progress, req.stems);
       post({ type: 'result', id: req.id, analysis });
     } else if (req.type === 'redecode') {
       if (!analyzer) throw new Error('Nothing analysed yet');

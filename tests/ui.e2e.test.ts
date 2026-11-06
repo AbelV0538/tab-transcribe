@@ -10,6 +10,7 @@ import type { AddressInfo } from 'node:net';
 import { chromium, type Browser, type Page } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fretSpacePoint, renderFretboard, type FretboardPose } from './helpers/fretboard';
+import modelInfo from '../src/separation/modelInfo.json';
 import { bassSong, encodeWav, guitarMelodySong, synthesize, type SynthNote } from './helpers/synth';
 
 const root = path.resolve(__dirname, '..');
@@ -30,15 +31,37 @@ function serve(): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://x');
     let file = path.join(dist, decodeURIComponent(url.pathname));
     if (url.pathname.startsWith('/__fixtures/')) file = path.join(out, url.pathname.slice('/__fixtures/'.length));
+    // The separation model, in place of its download (reached by a redirect, so it is cross-origin).
+    if (url.pathname === '/__model') file = MODEL_FILE;
     if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
     if (!fs.existsSync(file)) {
       res.writeHead(404).end();
       return;
     }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream' });
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream', 'Access-Control-Allow-Origin': '*' });
     fs.createReadStream(file).pipe(res);
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+}
+
+const SETTINGS_KEY = 'tab-transcribe.settings.v2';
+const MODEL_FILE = path.join(root, 'models', modelInfo.file);
+const hasModel = fs.existsSync(MODEL_FILE) && fs.statSync(MODEL_FILE).size === modelInfo.size;
+
+/** A page whose settings start with `settings` (applied once, before the app loads). */
+async function newPage(options?: Parameters<Browser['newPage']>[0], settings: Record<string, unknown> = { separation: 'off' }): Promise<Page> {
+  const page = await browser.newPage(options);
+  // Instrument separation would download a 136 MB model: off unless a test asks for it.
+  await page.addInitScript(
+    ([key, preset]) => {
+      if (sessionStorage.getItem('settings-preset')) return;
+      sessionStorage.setItem('settings-preset', '1');
+      const saved = JSON.parse(localStorage.getItem(key) || '{}');
+      localStorage.setItem(key, JSON.stringify({ ...saved, ...preset }));
+    },
+    [SETTINGS_KEY, settings] as const,
+  );
+  return page;
 }
 
 async function transcribe(page: Page, file: string) {
@@ -70,7 +93,7 @@ afterAll(async () => {
 
 describe('web app', () => {
   it('transcribes a guitar + bass recording on a phone-sized screen', async () => {
-    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, acceptDownloads: true });
+    const page = await newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, acceptDownloads: true });
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(String(e)));
     await transcribe(page, path.join(out, 'band.wav'));
@@ -112,7 +135,7 @@ describe('web app', () => {
   }, 300_000);
 
   it('plays the transcription with a moving cursor', async () => {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const page = await newPage({ viewport: { width: 1280, height: 900 } });
     await transcribe(page, path.join(out, 'bass.wav'));
     expect(await page.locator('#summary').innerText()).toMatch(/No guitar detected/);
     await page.getByRole('button', { name: 'Transcription' }).click();
@@ -126,7 +149,7 @@ describe('web app', () => {
   }, 300_000);
 
   it('decodes an MP4 with WebCodecs when the browser file decoder fails', async () => {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const page = await newPage({ viewport: { width: 1280, height: 900 } });
     const logs: string[] = [];
     page.on('console', (m) => logs.push(m.text()));
     // Simulate a browser whose decodeAudioData can't read the file.
@@ -152,7 +175,7 @@ describe('web app', () => {
   }, 300_000);
 
   it('explains when an audio track decodes to silence or is missing', async () => {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const page = await newPage({ viewport: { width: 1280, height: 900 } });
     await page.goto(base);
     for (const [file, message] of [
       ['silent-aac.mp4', /No sound could be decoded from this file's audio track \(AAC-LC, 44\.1 kHz\)/],
@@ -174,7 +197,7 @@ describe('web app', () => {
     const line: SynthNote[] = [...pitches, ...pitches].map((p, i) => ({ pitch: p, start: 0.5 + i * 0.5, end: 0.95 + i * 0.5, instrument: 'bass' }));
     fs.writeFileSync(path.join(out, 'playthrough.wav'), encodeWav(synthesize(line, 9, 44100), 44100));
     const pose: FretboardPose = { nutX: -120, nutY: 250, angle: 22, scale: 900 };
-    const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+    const page = await newPage({ viewport: { width: 1280, height: 1000 } });
     const problems: string[] = [];
     page.on('pageerror', (e) => problems.push(String(e)));
     page.on('console', (m) => m.type() === 'error' && problems.push(m.text()));
@@ -297,7 +320,7 @@ describe('web app', () => {
   });
 
   it('accepts a video file', async () => {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const page = await newPage({ viewport: { width: 1280, height: 900 } });
     await page.goto(base);
     // Record a WebM video (canvas animation + the synthesised band audio) inside the browser.
     const b64 = await page.evaluate(async (wavUrl) => {
@@ -340,4 +363,63 @@ describe('web app', () => {
     await page.screenshot({ path: path.join(out, 'desktop-video.png'), fullPage: true });
     await page.close();
   }, 300_000);
+
+  it('does not separate instruments on a phone unless asked (Auto)', async () => {
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36',
+      isMobile: true,
+      hasTouch: true,
+    });
+    const page = await context.newPage();
+    const downloads: string[] = [];
+    page.on('request', (r) => {
+      if (/huggingface\.co|hf\.co/.test(r.url())) downloads.push(r.url());
+    });
+    await transcribe(page, path.join(out, 'bass.wav'));
+    expect(await page.locator('select[name=separation]').inputValue()).toBe('auto');
+    expect(downloads).toEqual([]);
+    expect(await page.locator('#summary').innerText()).not.toMatch(/separat/i);
+    expect(await page.locator('#sourceSeg button[data-source=guitarStem]').isHidden()).toBe(true);
+    await context.close();
+  }, 300_000);
+
+  it('falls back to the full mix when the separation model cannot be downloaded', async () => {
+    const page = await newPage({ viewport: { width: 1280, height: 900 } }, { separation: 'on' });
+    await page.route(/huggingface\.co|hf\.co/, (route) => route.abort('internetdisconnected'));
+    await transcribe(page, path.join(out, 'band.wav'));
+    const summary = await page.locator('#summary').innerText();
+    expect(summary).toMatch(/Could not separate the instruments: transcribed the full mix/);
+    expect(summary).toMatch(/Bass ·/);
+    expect(await page.locator('#sourceSeg button[data-source=bassStem]').isHidden()).toBe(true);
+    await page.close();
+  }, 300_000);
+
+  it.skipIf(!hasModel)('separates the instruments in the browser before transcribing', async () => {
+    // The real model, served from models/ in place of the download (CPU, as in browsers without
+    // WebGPU). A redirect, not route.fulfill: a 136 MB body breaks the browser connection.
+    const page = await newPage({ viewport: { width: 1280, height: 900 } }, { separation: 'on', backend: 'wasm' });
+    const logs: string[] = [];
+    page.on('console', (m) => logs.push(m.text()));
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    await page.route(modelInfo.url, (route) => route.fulfill({ status: 302, headers: { location: `${base}__model`, 'access-control-allow-origin': '*' } }));
+    await transcribe(page, path.join(out, 'band.wav'));
+    const summary = await page.locator('#summary').innerText();
+    expect(summary, logs.filter((l) => l.includes('[separate]')).join('\n')).toMatch(/Instruments separated first \(CPU/);
+    expect(summary).toMatch(/Bass ·/);
+    expect(logs.some((l) => /\[separate\] wasm: done/.test(l))).toBe(true);
+
+    // The isolated bass can be played along with the tab.
+    const bassStem = page.locator('#sourceSeg button[data-source=bassStem]');
+    expect(await bassStem.isVisible()).toBe(true);
+    await bassStem.click();
+    await page.click('#playBtn');
+    await page.waitForTimeout(1500);
+    expect(await page.locator('#time').innerText()).toMatch(/^0:0[1-2] \//);
+    await page.click('#playBtn');
+    await page.screenshot({ path: path.join(out, 'desktop-separated.png'), fullPage: true });
+    expect(errors).toEqual([]);
+    await page.close();
+  }, 600_000);
 });

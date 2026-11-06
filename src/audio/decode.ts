@@ -18,6 +18,13 @@ export interface DecodedAudio {
   duration: number;
   /** Which decoder produced the audio (for diagnostics). */
   decoder: string;
+  /** Stereo at `DecodeOptions.stereoRate`, when requested (mono files have two equal channels). */
+  stereo?: { left: Float32Array; right: Float32Array; sampleRate: number };
+}
+
+export interface DecodeOptions {
+  /** Also return stereo audio at this rate (for instrument separation). */
+  stereoRate?: number;
 }
 
 /** A peak below this (-80 dBFS) is digital silence: the decoder produced no real audio. */
@@ -85,16 +92,24 @@ export async function decodeFile(
   targetRate: number,
   onProgress: (stage: string, fraction: number) => void = () => {},
   fallbackContext?: AudioContext,
+  options: DecodeOptions = {},
 ): Promise<DecodedAudio> {
   const attempts: string[] = [];
-  const accept = (samples: Float32Array, decoder: string): DecodedAudio | null => {
+  const stereoRate = options.stereoRate;
+  const accept = (samples: Float32Array, decoder: string, stereo?: DecodedAudio['stereo']): DecodedAudio | null => {
     const peak = peakOf(samples);
     const duration = samples.length / targetRate;
     console.info(`[decode] ${decoder}: ${duration.toFixed(1)} s, peak ${(20 * Math.log10(peak + 1e-12)).toFixed(1)} dBFS`);
     if (duration < 0.05) attempts.push(`${decoder}: no audio`);
     else if (peak < SILENCE_PEAK) attempts.push(`${decoder}: decoded to silence`);
-    else return { samples, sampleRate: targetRate, duration, decoder };
+    else return { samples, sampleRate: targetRate, duration, decoder, ...(stereo ? { stereo } : {}) };
     return null;
+  };
+  /** Stereo for a decoder that only gives mono: the same signal on both channels. */
+  const monoAsStereo = async (mono: Float32Array, rate: number): Promise<DecodedAudio['stereo']> => {
+    if (!stereoRate) return undefined;
+    const s = await resample(mono, rate, stereoRate);
+    return { left: s, right: s, sampleRate: stereoRate };
   };
 
   // 1. The browser's file decoder. Decoding into an offline context at the target rate also resamples.
@@ -102,10 +117,16 @@ export async function decodeFile(
   let data: ArrayBuffer | null = await file.arrayBuffer();
   onProgress('Decoding audio', 0);
   try {
-    const buffer = await decodeWith(new (offlineCtor())(1, 1, targetRate), data);
+    const buffer = await decodeWith(new (offlineCtor())(1, 1, stereoRate ?? targetRate), data);
     let samples = mixToMono(buffer);
     if (buffer.sampleRate !== targetRate) samples = await resample(samples, buffer.sampleRate, targetRate);
-    const ok = accept(samples, 'Web Audio');
+    let stereo: DecodedAudio['stereo'];
+    if (stereoRate) {
+      const left = buffer.getChannelData(0);
+      const right = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : left;
+      stereo = buffer.sampleRate === stereoRate ? { left, right, sampleRate: stereoRate } : await monoAsStereo(mixToMono(buffer), buffer.sampleRate);
+    }
+    const ok = accept(samples, 'Web Audio', stereo);
     if (ok) return ok;
   } catch (err) {
     attempts.push(`Web Audio: ${describeError(err)}`);
@@ -122,7 +143,11 @@ export async function decodeFile(
       try {
         onProgress('Decoding audio track', 0);
         const decoded = await decodeWithWebCodecs(new Uint8Array(data), probe.track, (f) => onProgress('Decoding audio track', f));
-        const ok = accept(await resample(decoded.samples, decoded.sampleRate, targetRate), `WebCodecs (${probe.track.format})`);
+        const ok = accept(
+          await resample(decoded.samples, decoded.sampleRate, targetRate),
+          `WebCodecs (${probe.track.format})`,
+          await monoAsStereo(decoded.samples, decoded.sampleRate),
+        );
         if (ok) return ok;
       } catch (err) {
         attempts.push(`WebCodecs: ${describeError(err)}`);
@@ -135,7 +160,7 @@ export async function decodeFile(
   if (fallbackContext) {
     try {
       const recorded = await recordThroughMediaElement(file, fallbackContext, (f) => onProgress('Extracting audio track', f));
-      const ok = accept(await resample(recorded.samples, recorded.sampleRate, targetRate), 'media element');
+      const ok = accept(await resample(recorded.samples, recorded.sampleRate, targetRate), 'media element', await monoAsStereo(recorded.samples, recorded.sampleRate));
       if (ok) return ok;
     } catch (err) {
       attempts.push(`media element: ${describeError(err)}`);

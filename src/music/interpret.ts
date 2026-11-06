@@ -6,7 +6,7 @@
 import type { AudioAnalysis, RawNote } from '../engine/types';
 import { mergeFragments } from './cleanup';
 import { assignFingerings, type FingeringOptions } from './fingering';
-import { detectInstruments, type DetectionResult, type InstrumentMode } from './instruments';
+import { detectInstruments, heardInStem, type DetectionOptions, type DetectionResult, type InstrumentMode } from './instruments';
 import { correctWithHands, hintAt, type Playthrough } from './playthrough';
 import { buildBeatGrid, slotsPerBar, timeToSlot, type BeatGrid, type OnsetHint } from './rhythm';
 import { layoutBars, type TabBar } from './tab';
@@ -144,8 +144,8 @@ function filmedTuning(instrument: InstrumentKind, choice: string, notes: RawNote
   return resolveTuning(instrument, choice, inRange).tuning;
 }
 
-export function interpret(analysis: AudioAnalysis, settings: InterpretSettings, playthrough?: Playthrough): Transcription {
-  let notes = mergeFragments(analysis.notes);
+export function interpret(analysis: AudioAnalysis, settings: InterpretSettings, playthrough?: Playthrough, detectionOptions?: DetectionOptions): Transcription {
+  let notes = mergeFragments(analysis.notes.filter((n) => heardInStem(n, detectionOptions?.minStemShare)));
   let filmed: { instrument: InstrumentKind; weights: number[] } | undefined;
   let filmedTuningChoice: Tuning | undefined;
   let octaveFixes = 0;
@@ -162,11 +162,11 @@ export function interpret(analysis: AudioAnalysis, settings: InterpretSettings, 
     filmed = { instrument: inst, weights: merged.map((n) => weightOf.get(n) ?? 1) };
   }
 
-  let detection = detectInstruments(notes, settings.instrumentMode, filmed);
+  let detection = detectInstruments(notes, settings.instrumentMode, filmed, detectionOptions);
   if (playthrough && settings.instrumentMode === 'auto' && !detection[playthrough.instrument].present) {
     // The filmed instrument is certainly playing, even if the audio alone was unconvincing.
     const other = playthrough.instrument === 'bass' ? 'guitar' : 'bass';
-    detection = detectInstruments(notes, detection[other].present ? 'both' : playthrough.instrument, filmed);
+    detection = detectInstruments(notes, detection[other].present ? 'both' : playthrough.instrument, filmed, detectionOptions);
   }
   const bassNotes = removeBlips(makeMonophonic(detection.bassNotes));
   const guitarNotes = removeBlips(detection.guitarNotes);

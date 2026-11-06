@@ -93,7 +93,26 @@ export function pitchPrior(pitch: number): number {
   return PITCH_KNOTS[PITCH_KNOTS.length - 1][1];
 }
 
+/**
+ * Context of every note. With separated stems it is computed within each stem: a chord, the
+ * lowest voice and an overtone all belong to one instrument, so a bass note is not "inside" a
+ * guitar chord that happens to sound below it, and a guitar note an octave above the bass is
+ * not the bass's overtone.
+ */
 function computeContext(notes: RawNote[]): NoteContext[] {
+  if (!notes.some((n) => n.stem)) return computeStemContext(notes);
+  const ctx: NoteContext[] = new Array(notes.length);
+  for (const stem of [undefined, 'guitar', 'bass'] as const) {
+    const idx = notes.map((_, i) => i).filter((i) => notes[i].stem === stem);
+    if (!idx.length) continue;
+    computeStemContext(idx.map((i) => notes[i])).forEach((c, k) => {
+      ctx[idx[k]] = { ...c, overtoneOf: c.overtoneOf >= 0 ? idx[c.overtoneOf] : -1 };
+    });
+  }
+  return ctx;
+}
+
+function computeStemContext(notes: RawNote[]): NoteContext[] {
   const ctx: NoteContext[] = notes.map(() => ({ lowestFrac: 0, groupSize: 1, rank: 0, intervalUp: null, overtoneOf: -1, overtoneRatio: 1, isolated: false, overtoneOfSounding: false }));
   if (notes.length === 0) return ctx;
 
@@ -160,9 +179,28 @@ function computeContext(notes: RawNote[]): NoteContext[] {
   return ctx;
 }
 
+/**
+ * Evidence from instrument separation: a note heard in the bass stem is most likely bass,
+ * one heard in the guitar stem guitar. Not overwhelming, so that register can still move
+ * bleed from one stem into the other (and notes no guitar or bass can play still count).
+ */
+export const STEM_PRIOR = 3.5;
+
+/**
+ * Notes whose harmonics are this much weaker in their stem than in the mix are leftovers of
+ * an instrument that was separated into another stem (`NoteFeatures.stemShare`), not notes.
+ */
+export const MIN_STEM_SHARE = 0.1;
+
+/** False for a note that is only faint leftovers in its stem. */
+export function heardInStem(n: RawNote, minShare = MIN_STEM_SHARE): boolean {
+  return n.features.stemShare === undefined || n.features.stemShare >= minShare;
+}
+
 /** Log-likelihood ratio that a note was played on bass rather than guitar. */
-function bassScore(n: RawNote, c: NoteContext): number {
+function bassScore(n: RawNote, c: NoteContext, stemPrior: number): number {
   let s = pitchPrior(n.pitch);
+  if (n.stem) s += n.stem === 'bass' ? stemPrior : -stemPrior;
   s += 2.2 * (c.lowestFrac - 0.5);
   if (c.groupSize >= 2) {
     if (c.rank > 0) {
@@ -228,12 +266,19 @@ export interface FilmedWeights {
   weights: number[];
 }
 
-export function detectInstruments(notes: RawNote[], mode: InstrumentMode, filmed?: FilmedWeights): DetectionResult {
+/** Overrides for detection constants (used by the benchmark). */
+export interface DetectionOptions {
+  stemPrior?: number;
+  minStemShare?: number;
+}
+
+export function detectInstruments(notes: RawNote[], mode: InstrumentMode, filmed?: FilmedWeights, opts: DetectionOptions = {}): DetectionResult {
   const videoBass = (i: number) => (filmed?.instrument === 'bass' ? filmed.weights[i] : 1);
   // A filmed guitar can't be playing notes its fretting hand is nowhere near.
   const videoRejectsGuitar = (i: number) => filmed?.instrument === 'guitar' && filmed.weights[i] < 0.5;
   const ctx = computeContext(notes);
-  const scores = notes.map((n, i) => bassScore(n, ctx[i]));
+  const stemPrior = opts.stemPrior ?? STEM_PRIOR;
+  const scores = notes.map((n, i) => bassScore(n, ctx[i], stemPrior));
   const weight = (n: RawNote) => n.amplitude * Math.min(1, Math.max(0.05, n.end - n.start));
   const total = notes.reduce((s, n) => s + weight(n), 0) || 1;
 

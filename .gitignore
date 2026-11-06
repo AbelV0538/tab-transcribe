@@ -13,3 +13,9 @@ tests/e2e/out/
 keystore.properties
 # Personal test recordings (not ours to redistribute)
 testvid/
+# RTYWD album benchmark data (copyrighted; not ours to redistribute) and its analysis cache
+RTYWD Audio/
+RTYWD Guitar Tabs/
+.album-cache/
+# Instrument-separation model for the Node tests/benchmark (npm run models:separation)
+models/

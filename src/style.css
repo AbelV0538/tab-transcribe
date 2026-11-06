@@ -117,6 +117,7 @@ button { cursor: pointer; }
 .chip.guitar { border-color: var(--guitar); }
 .chip.bass { border-color: var(--bass); }
 .chip.off { opacity: .55; }
+.chip.warn { border-color: var(--error); color: var(--error); }
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 .dot.guitar { background: var(--guitar); }
 .dot.bass { background: var(--bass); }

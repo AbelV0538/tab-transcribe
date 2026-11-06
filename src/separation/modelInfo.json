@@ -1,0 +1,12 @@
+{
+  "name": "HTDemucs 6-stem (ONNX, fp16 weights)",
+  "url": "https://huggingface.co/StemSplitio/htdemucs-6s-onnx/resolve/49df9b6989cf2150840ea65b0bef77a2e471b678/htdemucs_6s_fp16weights.onnx",
+  "file": "htdemucs_6s_fp16weights.onnx",
+  "size": 136428532,
+  "sha256": "7ce55792e2231c93fbf92de95f5fd5b3a5e6c89f7db690dfd693e8f1dce56869",
+  "sampleRate": 44100,
+  "segment": 343980,
+  "stems": ["drums", "bass", "other", "vocals", "guitar", "piano"],
+  "input": "mix",
+  "output": "stems"
+}

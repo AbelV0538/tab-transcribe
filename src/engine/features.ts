@@ -89,6 +89,26 @@ export function computeNoteFeatures(
   });
 }
 
+/**
+ * Energy of a note's first harmonics in `audio`, measured like the timbre descriptors above
+ * (a 4096-sample window from 30 ms after the onset). Comparing it between a separated stem and
+ * the mix shows whether the stem really holds the note or only faint leftovers of it.
+ */
+export function harmonicEnergy(audio: Float32Array, sampleRate: number, pitch: number, start: number): number {
+  const n = 4096;
+  const binHz = sampleRate / n;
+  const mag = magnitudeSpectrum(audio, Math.round(start * sampleRate) + Math.round(0.03 * sampleRate), n);
+  const f0 = midiToHz(pitch);
+  let energy = 0;
+  for (let k = 1; k <= N_HARMONICS; k++) {
+    const f = f0 * k;
+    if (f > sampleRate / 2 - 2 * binHz) break;
+    const bin = f / binHz;
+    energy += peakNear(mag, bin, Math.max(1, bin * 0.03)).amp ** 2;
+  }
+  return energy;
+}
+
 function sumSquares(a: Float64Array): number {
   let s = 0;
   for (let i = 0; i < a.length; i++) s += a[i] * a[i];
